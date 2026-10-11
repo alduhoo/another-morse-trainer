@@ -61,13 +61,13 @@ object LeaderboardClient {
     /**
      * The Google Cloud project NUMBER Play Integrity decodes tokens for.
      *
-     * From the Google Cloud console (project `amt-leaderboard`, the numeric
-     * "Project number" on the dashboard, not the project id), linked in Play
-     * Console on 2026-09-08. 0 would mean "not configured": the
-     * client attests nothing, submits nothing and shows nothing, so a build
-     * with this unset behaves as though the feature were off.
+     * The value lives in `app/build.gradle.kts` (`defaultConfig`), which is
+     * also where it is documented, because it is what the no-GMS build has to
+     * change: `-Pnogms=true` sets it to 0, and 0 means "not configured" — the
+     * client attests nothing, submits nothing and shows nothing, so the
+     * feature behaves as though it were off.
      */
-    const val LEADERBOARD_CLOUD_PROJECT_NUMBER = 39877526242L   // amt-leaderboard, linked in Play Console 2026-09-08
+    val LEADERBOARD_CLOUD_PROJECT_NUMBER = BuildConfig.LEADERBOARD_CLOUD_PROJECT_NUMBER
 
     private const val TAG = "Leaderboard"
     private const val TIMEOUT_SECONDS = 10L
@@ -94,7 +94,12 @@ object LeaderboardClient {
      */
     internal val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    /** True once the maintainer has filled [LEADERBOARD_CLOUD_PROJECT_NUMBER]. */
+    /**
+     * True once the maintainer has filled [LEADERBOARD_CLOUD_PROJECT_NUMBER].
+     * False in a `-Pnogms=true` build, where there is no Play Integrity to
+     * attest with — this is the gate that keeps the stub attester in
+     * `src/nogms/java` from ever being constructed.
+     */
     val isConfigured: Boolean get() = LEADERBOARD_CLOUD_PROJECT_NUMBER != 0L
 
     /**

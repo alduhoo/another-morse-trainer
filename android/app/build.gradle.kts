@@ -13,6 +13,59 @@ val keystoreProps = Properties().apply {
     if (keystorePropsFile.exists()) keystorePropsFile.inputStream().use { load(it) }
 }
 
+// ---------------------------------------------------------------------------
+// A build with no Google Play Services.
+//
+//   ./gradlew :app:assembleDebug -Pnogms=true
+//
+// drops com.google.android.play:integrity (and play-services-tasks and
+// -basement with it), compiles the stub PlayIntegrityAttester in
+// src/nogms/java instead of the real one in src/play/java, and sets the
+// leaderboard's cloud project number to 0 — which the app already reads as
+// "not configured" and handles throughout (LeaderboardClient.isConfigured).
+// The result is an APK with no Google code in it at all, which installs and
+// runs on a device that has no Play Store and no GMS.
+//
+// What such a build gives up is the shared leaderboard and the buddy streak,
+// and that is not a loss this toggle causes: docs/high-scores-design.md §3
+// makes attestation the trust root on purpose, so a self-built or sideloaded
+// copy is rejected by the server whether or not it can produce a token.
+// Everything else — every training mode, every game, local personal bests,
+// stats, hardware keys, account sync — is untouched.
+//
+// Why a property and not a product flavor: a flavor renames every output
+// path (apk/play/debug/app-play-debug.apk,
+// bundle/playRelease/app-play-release.aab, mapping/playRelease/), which means
+// editing the Play upload workflow, three artifact paths in android-ci.yml
+// and the APK search in android-smoke.sh — release machinery, edited blind.
+// This toggle leaves the shipping build byte for byte as it was, and a fork
+// that publishes a GMS-free APK adds `-Pnogms=true` to its own workflow and
+// changes nothing else.
+//
+// `-Pnogms` with no value is accepted too, but Gradle's handling of a
+// valueless property is version-dependent, so the configuration log below is
+// what actually confirms which build you are getting. Read it.
+val nogmsProp: String? = providers.gradleProperty("nogms").orNull
+val noGms = nogmsProp != null && nogmsProp != "false" && nogmsProp != "0"
+if (noGms) {
+    logger.lifecycle(
+        "AMT: building WITHOUT Google Play Services " +
+            "(no Play Integrity; shared leaderboard and buddy streak are off)"
+    )
+}
+
+// Added to versionCode below. Android installs an update only over a LOWER
+// versionCode, so anything that publishes a series of APKs outside a store
+// needs a counter — and `versionCode` itself cannot be it, because that number
+// belongs to the Play uploads and moves only when the maintainer says so
+// (CLAUDE.md, Versions: a build number Play has accepted can never be reused).
+//
+// So a side channel: `-PversionCodeExtra=7` builds versionCode 30+7. Unset it
+// is 0, which is what every existing build passes, so the Play build's number
+// is exactly what it was. Intended for a fork's own release workflow, which
+// can pass github.run_number and never touch this file.
+val versionCodeExtra = providers.gradleProperty("versionCodeExtra").orNull?.toInt() ?: 0
+
 android {
     namespace = "app.anothermorsetrainer"
     compileSdk = 37
@@ -25,8 +78,33 @@ android {
         // app's runtime behaviour on Android 17 devices, which nothing here can
         // test (the smoke test emulator runs API 34). Move it as its own change.
         targetSdk = 36
-        versionCode = 30
+        // 30 is the Play counter; versionCodeExtra is 0 for every build that
+        // does not pass -PversionCodeExtra (see the note at the top of this file).
+        versionCode = 30 + versionCodeExtra
         versionName = "2.0.0"
+
+        // The Google Cloud project NUMBER Play Integrity decodes tokens for:
+        // project `amt-leaderboard`, the numeric "Project number" on the Cloud
+        // console dashboard (not the project id), linked in Play Console on
+        // 2026-09-08. Read by LeaderboardClient.LEADERBOARD_CLOUD_PROJECT_NUMBER.
+        //
+        // 0 means "not configured": the client attests nothing, submits nothing
+        // and shows nothing, so the feature behaves as though it were off. That
+        // is what a -Pnogms=true build gets, because without the Play Integrity
+        // library there is nothing that could produce a token.
+        buildConfigField(
+            "long",
+            "LEADERBOARD_CLOUD_PROJECT_NUMBER",
+            if (noGms) "0L" else "39877526242L"
+        )
+
+        // Whether this APK actually contains com.google.android.play:integrity,
+        // which decides whether Google's notice belongs on Settings › Help &
+        // About › Licenses (CLAUDE.md, Licensing: the notice goes on every port
+        // that *ships* it). Deliberately not the same question as
+        // LeaderboardClient.isConfigured: a Play build with the project number
+        // unset still ships the SDK and still owes the notice.
+        buildConfigField("boolean", "SHIPS_PLAY_INTEGRITY", if (noGms) "false" else "true")
     }
 
     signingConfigs {
@@ -66,6 +144,10 @@ android {
     // Kotlin jvmTarget defaults to compileOptions.targetCompatibility (17).
     buildFeatures {
         compose = true
+        // Off by default since AGP 8. Turned on for the single field above,
+        // which is the one thing a -Pnogms=true build has to change in code
+        // the app reads at runtime.
+        buildConfig = true
     }
 
     // AGP ships lint for free and nothing was running it. Path exclusions live
@@ -76,6 +158,23 @@ android {
     // it on the unit-test classpath so MorseTimingTest can read it by name
     // rather than walking relative paths out of the module.
     sourceSets {
+        getByName("main") {
+            // PlayIntegrityAttester exists twice — the real one against the Play
+            // Integrity SDK, and a stub for the -Pnogms=true build, which has no
+            // SDK to compile against. Exactly one directory is ever on the source
+            // path, so the two can share a fully-qualified name.
+            //
+            // `kotlin`, not `java`: under AGP 9's built-in Kotlin these are
+            // separate source directory sets, and a .kt file under a `java`
+            // directory is not compiled. That failure is silent in the only way
+            // that matters — the directory is accepted, nothing reads it, and the
+            // build fails later with "Unresolved reference 'PlayIntegrityAttester'"
+            // from LeaderboardClient, which reads like a missing file rather than
+            // a misconfigured source set. Both directories are named `java/` to
+            // match src/main/java/ next door; the directory name is not what AGP
+            // keys on.
+            kotlin.directories += file(if (noGms) "src/nogms/java" else "src/play/java").path
+        }
         getByName("test") {
             // `directories` is AGP 9's replacement for the deprecated srcDir();
             // it takes path strings, evaluated as project.file().
@@ -117,19 +216,29 @@ dependencies {
     // WebSocket transport for the Vail repeater client (and the Short
     // Stories news-feed fetch).
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    // Play Integrity, standard API: the device attestation behind every write
-    // to the shared leaderboard (docs/high-scores-design.md §3; the client is
-    // LeaderboardClient + PlayIntegrityAttester). Pulls play-services-tasks
-    // and -basement. Its notice is on Settings › Help & About › Licenses, as the
-    // Licensing section of CLAUDE.md requires. 1.6.0 was the newest release on
-    // maven.google.com on 2026-09-08.
-    implementation("com.google.android.play:integrity:1.6.0")
-    // Not used by the app directly. play-services-basement (pulled by
-    // integrity above) declares androidx.fragment:fragment:1.1.0 — still so in
-    // basement 18.12.0, the newest on 2026-09-25 — and Play Console's SDK
-    // Index flags 1.1.0 as outdated. Declaring it here lets Gradle resolve the
-    // current stable instead. Drop this once basement's POM moves past 1.2.1.
-    implementation("androidx.fragment:fragment:1.9.1")
+    // The only Google Play dependency in the app, and the only reason it needs
+    // Play Services on the device at all — so a -Pnogms=true build omits both
+    // of these and gets the src/nogms/java stub instead (see the toggle at the
+    // top of this file).
+    if (!noGms) {
+        // Play Integrity, standard API: the device attestation behind every write
+        // to the shared leaderboard (docs/high-scores-design.md §3; the client is
+        // LeaderboardClient + PlayIntegrityAttester). Pulls play-services-tasks
+        // and -basement. Its notice is on Settings › Help & About › Licenses, as the
+        // Licensing section of CLAUDE.md requires. 1.6.0 was the newest release on
+        // maven.google.com on 2026-09-08.
+        implementation("com.google.android.play:integrity:1.6.0")
+        // Not used by the app directly. play-services-basement (pulled by
+        // integrity above) declares androidx.fragment:fragment:1.1.0 — still so in
+        // basement 18.12.0, the newest on 2026-09-25 — and Play Console's SDK
+        // Index flags 1.1.0 as outdated. Declaring it here lets Gradle resolve the
+        // current stable instead. Drop this once basement's POM moves past 1.2.1.
+        //
+        // Inside the `if` with integrity because that is the only thing that
+        // brings basement in: with no basement there is no fragment 1.1.0 to
+        // outrank, and nothing else here uses fragment.
+        implementation("androidx.fragment:fragment:1.9.1")
+    }
     // EncryptedSharedPreferences for the accounts sign-in's access and refresh
     // tokens (AccountClient): encrypted at rest under an Android Keystore key.
     // Pulls Google Tink. Apache-2.0; its notice is on Settings › Help & About ›

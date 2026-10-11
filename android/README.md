@@ -249,6 +249,35 @@ Requires JDK 17 (Android Studio's bundled JBR works) and the Android SDK.
 
 `compileSdk`/`targetSdk` 36, `minSdk` 24.
 
+### Without Google Play Services
+
+The app has exactly one Google dependency — `com.google.android.play:integrity`,
+the device attestation behind the shared leaderboard — and it can be left out:
+
+```bash
+./gradlew assembleDebug -Pnogms=true
+```
+
+That build contains no Google code at all, so it installs and runs on a device
+with no Play Store and no GMS (microG, a de-Googled ROM, Aurora Store). Gradle
+prints a line at configuration time naming which build you are getting; read it
+rather than trusting the flag.
+
+What it gives up is the **shared leaderboard** and the **buddy streak**, and
+only those. Every training mode, every game, local personal bests, stats,
+hardware keys and account sync work unchanged. The loss is not a side effect of
+the toggle: `docs/high-scores-design.md` §3 makes attestation the trust root on
+purpose, so the server rejects a self-built or sideloaded copy whether or not it
+can produce a token. The leaderboard and buddy screens already have a
+"not configured" state and show it.
+
+Mechanics, all in `app/build.gradle.kts`: the dependency is dropped,
+`PlayIntegrityAttester` is compiled from `src/nogms/java` (a stub nothing
+constructs) instead of `src/play/java`, `LEADERBOARD_CLOUD_PROJECT_NUMBER`
+becomes 0, and Google's notice leaves the Licenses screen with the SDK it
+describes. The Play build is unaffected — same tasks, same output paths, same
+bytes.
+
 ## Release
 
 See [RELEASE.md](RELEASE.md) for signing and Google Play upload steps. The

@@ -1207,13 +1207,20 @@ fun SettingsScreen(
                     // (CLAUDE.md, Licensing: a dependency with a notice goes
                     // here). Not open source: Google's SDK licence and the
                     // Play Integrity terms, linked rather than reproduced.
-                    Text(stringResource(R.string.licenses_play_integrity_title), color = Brand.textPrimary, fontWeight = FontWeight.SemiBold)
-                    Text(stringResource(R.string.licenses_play_integrity_footer), color = Brand.textSecondary, fontSize = 13.sp)
-                    Text(
-                        stringResource(R.string.licenses_play_integrity_link),
-                        color = Brand.teal, fontWeight = FontWeight.Medium,
-                        modifier = Modifier.clickable { uriHandler.openUri(PLAY_INTEGRITY_TERMS_URL) }
-                    )
+                    //
+                    // Omitted from the no-GMS build, which does not contain the
+                    // SDK: the rule is that the notice travels with every copy
+                    // that ships it, and a copy that ships no Google code must
+                    // not claim Google's terms apply to it.
+                    if (BuildConfig.SHIPS_PLAY_INTEGRITY) {
+                        Text(stringResource(R.string.licenses_play_integrity_title), color = Brand.textPrimary, fontWeight = FontWeight.SemiBold)
+                        Text(stringResource(R.string.licenses_play_integrity_footer), color = Brand.textSecondary, fontSize = 13.sp)
+                        Text(
+                            stringResource(R.string.licenses_play_integrity_link),
+                            color = Brand.teal, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.clickable { uriHandler.openUri(PLAY_INTEGRITY_TERMS_URL) }
+                        )
+                    }
                     // The account token store's encryption (AccountClient):
                     // AndroidX Security and the Tink library it pulls in, both
                     // Apache-2.0, whose notice is linked rather than reproduced.

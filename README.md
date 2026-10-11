@@ -1,3 +1,17 @@
+> [!NOTE]
+> **This is a fork, and it exists for one narrow reason:** building an APK that
+> runs on an Android device with no Google Play Services. Its only change is a
+> `-Pnogms=true` build option — see
+> [Without Google Play Services](android/README.md#without-google-play-services).
+> There are no other features here, and no releases: you build it yourself.
+>
+> **Prefer the official builds** from
+> [N9HO/another-morse-trainer](https://github.com/N9HO/another-morse-trainer) if
+> your device can run them. Those are the ones the developer tests and supports,
+> they update themselves, and they have the shared leaderboard and buddy streak,
+> which a build from here cannot have by design — device attestation is the
+> anti-cheat, so a self-built copy is refused whatever it is built from.
+
 # Another Morse Trainer
 
 Learn to copy Morse code (CW) by ear with the Koch method. This repository holds
